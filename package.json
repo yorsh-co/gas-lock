@@ -1,0 +1,11 @@
+{
+  "name": "gas-lock",
+  "version": "0.0.0",
+  "description": "Reentrancy-safe wrapper around Apps Script's LockService.",
+  "license": "MIT",
+  "author": "Joshua Porter",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yorsh-co/gas-lock.git"
+  }
+}

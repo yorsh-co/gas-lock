@@ -1,15 +1,84 @@
 # gas-lock
 
-Reentrancy-safe wrapper around Apps Script's `LockService`.
+[![Built with Google Apps Script](https://img.shields.io/badge/Built%20with-Google%20Apps%20Script-4285F4?logo=google&logoColor=white)](https://developers.google.com/apps-script)
 
-GAS's document/script/user locks aren't reentrant — a nested `waitLock()`
-call for a scope your own execution already holds just blocks until its
-own timeout, since nothing else in a single-threaded execution can ever
-release it. `GasLock.withLock()` tracks which scopes are currently held
-by the current execution's call stack and reuses an already-held scope
-instead of re-acquiring it.
+## Reentrancy-safe wrapper around Google Apps Script's `LockService`.
 
-## Usage
+> The goal of this project is to make nested locking in Apps Script projects safe by default, without callers having to track for themselves whether a lock is already held somewhere higher up the call stack.
+
+Apps Script's `LockService` locks (`script`, `document`, `user`) aren't reentrant. If code that already holds a lock calls into other code that tries to acquire that same lock again — directly, or several layers down through another library — the second `waitLock()` call just blocks until it times out. Nothing else in a single-threaded execution can ever release the first lock while it's stuck waiting on the second, so the call silently hangs until the timeout throws.
+
+`gas-lock` fixes this by tracking which scopes are currently held by the current execution's call stack. A nested `withLock()` call for a scope already held higher up reuses it instead of trying to acquire it again.
+
+> **Disclaimer:**
+> This project and [Yorsh](https://github.com/yorsh-co) are independent and are not affiliated with, endorsed by, or associated with Google LLC.
+
+### Features
+
+- Reentrancy-safe `withLock()` — nested calls for an already-held scope reuse it instead of deadlocking
+- Supports all three `LockService` scopes: `script`, `document`, `user`
+- `isHeld()` to check whether a scope is already held in the current execution
+- `getLock()` for callers needing raw, non-blocking `tryLock()`/`releaseLock()` control instead of `withLock`'s blocking `waitLock`
+- Clear, actionable errors instead of raw null-reference failures — e.g. when `document` scope is requested outside the context of a containing document
+- Designed to be optionally injectable into other libraries (e.g. `gas-sheetdb`, `gas-webapp`) as their lock service, the same way a logger is injected — each falls back to calling `LockService` directly if `gas-lock` isn't provided
+- Singleton namespace, not a class — one shared, execution-wide registry
+- Written in TypeScript with generated JavaScript distribution
+- No external dependencies beyond built-in Apps Script services
+
+### Example Usage
+
+```js
+// A naive nested lock would deadlock here — the inner call blocks until
+// timeout, waiting on a lock the outer call already holds and can't
+// release until the inner call returns.
+GasLock.withLock('script', () => {
+  // holds 'script'
+  saveConfig(); // internally also calls GasLock.withLock('script', ...)
+  // reused, not re-acquired — no deadlock
+});
+
+function saveConfig() {
+  GasLock.withLock('script', () => {
+    // ...critical section...
+  });
+}
+```
+
+## Requirements
+
+### Scopes
+
+`gas-lock` wraps Apps Script's built-in `LockService`, which requires no `oauthScopes` entry in the parent project's `appsscript.json`.
+
+## Quick Start
+
+It is recommended to use `gas-lock` together with [Google's `clasp` CLI](https://github.com/google/clasp) for local Apps Script development and git-based workflows. See [Setup instructions with `clasp`](#setup-instructions-with-clasp) for more information.
+
+#### 1. Add the library to your Apps Script project
+
+This repository is intended to be added directly into Apps Script projects using git subtree.
+
+```bash
+git subtree add \
+  --prefix=src/lib/gas-lock \
+  https://github.com/yorsh-co/gas-lock.git \
+  dist \
+  --squash
+```
+
+This creates:
+
+```txt
+src/lib/gas-lock/
+```
+
+#### 2. If needed, move `gas-lock` files to the start of the execution order.
+
+This is required for calling `GasLock.withLock()` or `GasLock.getLock()` at runtime, as a global variable or inside an IIFE.
+
+See the [Configure the file push order](#5-configure-the-file-push-order) section for details.
+
+#### 3. Call `GasLock` wherever a lock is needed
 
 ```js
 GasLock.withLock('script', () => {
@@ -17,8 +86,104 @@ GasLock.withLock('script', () => {
 });
 ```
 
-Nesting is safe as long as the inner call uses the same scope an outer
-call already holds:
+## Setup instructions with `clasp`
+
+`gas-lock` works best with [Google's `clasp` CLI](https://github.com/google/clasp) for local Apps Script development and git-based workflows.
+
+#### 1. Install clasp
+
+```bash
+npm install -g @google/clasp
+```
+
+#### 2. Enable the [Apps Script API](https://script.google.com/home/usersettings)
+
+#### 3. Login to Google Apps Script
+
+```bash
+clasp login
+```
+
+#### 4. Clone or create your Apps Script project
+
+Clone an existing project:
+
+```bash
+clasp clone <script-id>
+```
+
+or create a new project:
+
+```bash
+clasp create --type standalone
+```
+
+#### 5. Configure the file push order
+
+Apps Script executes files by the order in the Apps Script editor, from top to bottom. By default, `clasp push` orders the files alphabetically, by file name. If `GasLock.withLock()` or `GasLock.getLock()` is called at runtime (as a global variable or in an IIFE) in a file ordered before `gas-lock`'s own files, `clasp push` will succeed but running the project will throw:
+
+```txt
+ReferenceError: GasLock is not defined
+```
+
+To avoid this, add a [`filePushOrder`](https://github.com/google/clasp#filepushorder-optional) entry to your project's `.clasp.json` that pushes `gas-lock`'s module files ahead of any file that references them:
+
+```json
+{
+  "filePushOrder": [
+    "dist/lib/gas-lock/gas-lock.constants.js",
+    "dist/lib/gas-lock/gas-lock.js",
+    "dist/lib/gas-lock/gas-lock.types.js"
+  ]
+}
+```
+
+Alternatively, you can manually move these files to the top of the file list in the Apps Script editor.
+
+> **Note:**
+> Any file in your own project that calls `GasLock.withLock()` or `GasLock.getLock()` at the top level (e.g. outside a function) must be pushed _after_ the entries above. Calls made from inside functions or methods are unaffected, since those only run after every file has already loaded.
+
+#### 6. Import `gas-lock`
+
+```bash
+git subtree add \
+  --prefix=src/lib/gas-lock \
+  https://github.com/yorsh-co/gas-lock.git \
+  dist \
+  --squash
+```
+
+This creates:
+
+```txt
+src/lib/gas-lock/
+```
+
+#### 7. Push local files to Apps Script
+
+```bash
+clasp push
+```
+
+#### 8. Call `GasLock` wherever a lock is needed
+
+```js
+GasLock.withLock('script', () => {
+  // ...critical section...
+});
+```
+
+## Basic Usage
+
+### Run a callback holding a lock
+
+```js
+GasLock.withLock('script', () => {
+  // ...critical section...
+});
+```
+
+### Nested calls reuse an already-held scope
 
 ```js
 GasLock.withLock('script', () => {
@@ -29,28 +194,116 @@ GasLock.withLock('script', () => {
 });
 ```
 
-Nesting _different_ scopes is unaffected — each is tracked and
-acquired/released independently.
+Nesting _different_ scopes is unaffected — each is tracked and acquired/released independently.
 
-## API
+### Check whether a scope is already held
 
-- `GasLock.withLock(scope, callback, options?)` — run `callback` holding
-  `scope` (`'script' | 'document' | 'user'`). `options.timeoutMs`
-  defaults to 30000. Throws if `scope` isn't one of the three valid
-  values, and throws a clear error (rather than a raw null-reference)
-  if `LockService` returns no lock for the scope — which happens for
-  `'document'` outside the context of a containing document, e.g. a
-  web app execution.
-- `GasLock.isHeld(scope)` — whether `scope` is currently held anywhere
-  in this execution's call stack.
+```js
+if (GasLock.isHeld('script')) {
+  // ...
+}
+```
 
-## Installing as a dependency
+### Get the raw lock for non-blocking use
 
-Peer dependency for other `gas-*` libraries the same way `gas-webapp`
-expects `gas-error`/`gas-logger` as globals — no import statement,
-just make sure `gas-lock.js` loads before anything that calls
-`GasLock.withLock`.
+```js
+const lock = GasLock.getLock('script');
+
+if (lock && lock.tryLock(3000)) {
+  try {
+    // ...critical section...
+  } finally {
+    lock.releaseLock();
+  }
+}
+```
+
+> **Note:**
+> `getLock()` is not reentrancy-tracked — reentrancy only means something for `withLock`'s callback-scoped critical sections. Use `getLock()` when you need `tryLock`'s non-blocking, fail-fast semantics (e.g. a rate limiter) rather than `withLock`'s blocking `waitLock`.
+
+### Set a custom timeout
+
+```js
+GasLock.withLock(
+  'script',
+  () => {
+    // ...critical section...
+  },
+  { timeoutMs: 10000 }, // defaults to 30000
+);
+```
+
+## Project Details
+
+### Reentrancy
+
+`LockService`'s `script`, `document`, and `user` locks are plain mutual-exclusion primitives — they have no concept of "the same execution already holds this." A second `waitLock()` call for a scope your own execution already holds just queues behind a lock that will never be released, since the only code that could release it is itself blocked waiting on the nested call to return.
+
+`GasLock` tracks currently-held scopes in an execution-scoped registry. When `withLock()` is called for a scope already in that registry, it runs the callback directly instead of calling `LockService` again. State lives only as long as one execution — Apps Script gives every `doGet`/`doPost`/trigger invocation a fresh global scope, so this never leaks between requests or users.
+
+### Lock Scopes
+
+`gas-lock` supports the same three scopes as `LockService` itself:
+
+| Scope      | `LockService` method | Notes                                                                                                                                                       |
+| ---------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `script`   | `getScriptLock()`    | Serializes across all users and all executions of the script.                                                                                               |
+| `document` | `getDocumentLock()`  | Only available for scripts running in the context of a containing document — not from a standalone script or a web app execution, where it returns no lock. |
+| `user`     | `getUserLock()`      | Serializes only the current user's own concurrent executions.                                                                                               |
+
+### Errors
+
+`withLock()` and `getLock()` throw a descriptive error rather than a raw null-reference failure when `LockService` can't provide the requested lock — most commonly when `document` scope is requested outside the context of a containing document, e.g. a web app execution.
+
+### Entry Point
+
+#### GasLock
+
+Main entry point for the library. Singleton namespace, not a class — there is no constructor.
+
+##### Methods
+
+```js
+GasLock.withLock(scope, callback, options); // options is optional; { timeoutMs } defaults to 30000
+GasLock.isHeld(scope);
+GasLock.getLock(scope);
+```
+
+### Example Workflow
+
+```js
+function saveReportsFolderId(folderId) {
+  GasLock.withLock('script', () => {
+    appConfig.load({ force: true });
+
+    if (appConfig.get('reportsFolderId')) return;
+
+    appConfig.set('reportsFolderId', folderId); // internally also calls
+    // GasLock.withLock('script', ...) via gas-sheetdb — reused, not
+    // re-acquired, so this doesn't deadlock.
+  });
+}
+```
+
+## Development
+
+The source code is written in TypeScript.
+
+Release builds are compiled to JavaScript before publishing so the distributed library remains compatible with Google Apps Script.
+
+## Planned features
+
+- Optional configurable default timeout per scope, rather than one global default
+- Expose the current held-scope registry for diagnostics/logging
 
 ## License
 
-MIT — see LICENSE.md.
+MIT
+
+See the `LICENSE` file for details.
+
+## Support
+
+Issues and feature requests are welcome via GitHub Issues.
+
+Maintained by [yorsh-co](https://github.com/yorsh-co).

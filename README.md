@@ -219,7 +219,11 @@ if (lock && lock.tryLock(3000)) {
 ```
 
 > **Note:**
-> `getLock()` is not reentrancy-tracked — reentrancy only means something for `withLock`'s callback-scoped critical sections. Use `getLock()` when you need `tryLock`'s non-blocking, fail-fast semantics (e.g. a rate limiter) rather than `withLock`'s blocking `waitLock`.
+> `getLock()` hands back the lock and steps out of the way — the caller owns `tryLock`/`releaseLock`, and forgetting to release holds it for the rest of the execution.
+>
+> It is also **not reentrancy-tracked**, and the consequence is worth being explicit about: a lock taken via `getLock()` is invisible to the registry, so `isHeld()` won't report it and a nested `withLock()` for the same scope will block against it exactly as it would against raw `LockService`. Reentrancy tracking only works for `withLock`'s callback-scoped critical sections, where `gas-lock` knows precisely when the scope is entered and left.
+>
+> Reach for `getLock()` only when you need `tryLock`'s non-blocking, fail-fast behavior — not as a general alternative to `withLock`.
 
 ### Set a custom timeout
 
@@ -253,7 +257,11 @@ GasLock.withLock(
 
 ### Errors
 
-`withLock()` and `getLock()` throw a descriptive error rather than a raw null-reference failure when `LockService` can't provide the requested lock — most commonly when `document` scope is requested outside the context of a containing document, e.g. a web app execution.
+`withLock()` throws a descriptive error rather than a raw null-reference failure when `LockService` can't provide the requested lock — most commonly when `document` scope is requested outside the context of a containing document, e.g. a web app execution.
+
+`getLock()` returns `null` in that same situation rather than throwing, leaving the decision to the caller: a non-blocking caller may reasonably want to proceed unguarded, or fail its own way, rather than have an exception raised on its behalf.
+
+Both throw on an unrecognized `scope` value.
 
 ### Entry Point
 
@@ -266,7 +274,7 @@ Main entry point for the library. Singleton namespace, not a class — there is 
 ```js
 GasLock.withLock(scope, callback, options); // options is optional; { timeoutMs } defaults to 30000
 GasLock.isHeld(scope);
-GasLock.getLock(scope);
+GasLock.getLock(scope); // → Lock | null
 ```
 
 ### Example Workflow

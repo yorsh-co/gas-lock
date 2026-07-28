@@ -69,5 +69,41 @@ const GasLock: GasLockNamespace = (() => {
     }
   };
 
-  return { withLock, isHeld };
+  /**
+   * Resolve the raw `Lock` for a scope without acquiring it.
+   *
+   * `withLock` covers the common case — hold a lock for the duration of a
+   * callback, blocking on `waitLock` until it's available. Some callers
+   * can't use that shape: a rate limiter guarding a `CacheService` counter
+   * needs `tryLock`'s fail-fast semantics, because a busy limiter should
+   * reject the request outright rather than queue behind it. `getLock`
+   * hands back the lock so those callers can drive
+   * `tryLock`/`releaseLock` themselves.
+   *
+   * Two consequences of returning a bare lock:
+   *
+   * - **The caller owns the lifecycle.** Nothing here acquires or releases
+   *   it; forgetting to `releaseLock()` holds it for the rest of the
+   *   execution.
+   * - **Not reentrancy-tracked.** The held-scope registry only covers
+   *   `withLock`'s callback-scoped critical sections, where GasLock knows
+   *   exactly when the scope is entered and left. It can't know that for a
+   *   lock it handed away, so a lock taken via `getLock` is invisible to
+   *   `isHeld` and to any nested `withLock` for the same scope — which
+   *   will then block against it as it would against raw `LockService`.
+   *
+   * Returns `null` when LockService itself declines to provide a lock —
+   * notably `document` scope outside the context of a containing document.
+   */
+  const getLock = (scope: GasLockScope): GoogleAppsScript.Lock.Lock | null => {
+    const factory = _GAS_LOCK_FACTORIES[scope];
+    if (!factory) {
+      throw new Error(
+        `[GasLock] Unknown lock scope "${scope}". Expected one of: ${Object.keys(_GAS_LOCK_FACTORIES).join(', ')}.`,
+      );
+    }
+    return factory();
+  };
+
+  return { withLock, isHeld, getLock };
 })();

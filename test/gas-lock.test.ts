@@ -2,9 +2,9 @@ import { describe, expect, it, type Mock } from 'vitest';
 import { loadGasLock } from './harness';
 import { LOCK_TIMEOUT_MESSAGE, type MockLock } from './mocks';
 
-/** Returns the first lock handle `factory` produced. */
-function lockOf(factory: Mock<() => MockLock | null>): MockLock {
-  const lock = factory.mock.results[0]?.value;
+/** Returns the `index`-th lock `factory` produced. */
+function lockOf(factory: Mock<() => MockLock | null>, index = 0): MockLock {
+  const lock = factory.mock.results[index]?.value;
   if (!lock) throw new Error('No lock was requested');
   return lock;
 }
@@ -190,15 +190,177 @@ describe('GasLock.isHeld', () => {
 });
 
 describe('GasLock.getLock', () => {
-  it('returns the raw lock without acquiring it', () => {
+  it('returns a handle without acquiring the lock', () => {
     const { GasLock, mocks } = loadGasLock();
 
-    const lock = GasLock.getLock('script');
+    const handle = GasLock.getLock('script');
 
-    expect(lock).toBe(lockOf(mocks.LockService.getScriptLock));
-    expect(lock?.waitLock).not.toHaveBeenCalled();
-    expect(lock?.tryLock).not.toHaveBeenCalled();
+    const lock = lockOf(mocks.LockService.getScriptLock);
+    expect(handle).not.toBeNull();
+    expect(lock.waitLock).not.toHaveBeenCalled();
+    expect(lock.tryLock).not.toHaveBeenCalled();
     expect(GasLock.isHeld('script')).toBe(false);
+    expect(handle?.hasLock()).toBe(false);
+  });
+
+  it('acquires with tryLock, registers the scope and releases for real', () => {
+    const { GasLock, mocks } = loadGasLock();
+    const handle = GasLock.getLock('script');
+    const lock = lockOf(mocks.LockService.getScriptLock);
+
+    expect(handle?.tryLock(100)).toBe(true);
+    expect(lock.tryLock).toHaveBeenCalledExactlyOnceWith(100);
+    expect(GasLock.isHeld('script')).toBe(true);
+    expect(handle?.hasLock()).toBe(true);
+
+    handle?.releaseLock();
+
+    expect(lock.releaseLock).toHaveBeenCalledOnce();
+    expect(lock.hasLock()).toBe(false);
+    expect(GasLock.isHeld('script')).toBe(false);
+    expect(handle?.hasLock()).toBe(false);
+  });
+
+  it('acquires with waitLock, passing the timeout through', () => {
+    const { GasLock, mocks } = loadGasLock();
+    const handle = GasLock.getLock('user');
+    const lock = lockOf(mocks.LockService.getUserLock);
+
+    handle?.waitLock(2500);
+
+    expect(lock.waitLock).toHaveBeenCalledExactlyOnceWith(2500);
+    expect(GasLock.isHeld('user')).toBe(true);
+    expect(handle?.hasLock()).toBe(true);
+
+    handle?.releaseLock();
+
+    expect(lock.releaseLock).toHaveBeenCalledOnce();
+    expect(GasLock.isHeld('user')).toBe(false);
+  });
+
+  it('returns false from tryLock and registers nothing when contended', () => {
+    const { GasLock } = loadGasLock({ contended: ['script'] });
+    const handle = GasLock.getLock('script');
+
+    expect(handle?.tryLock(100)).toBe(false);
+    expect(GasLock.isHeld('script')).toBe(false);
+    expect(handle?.hasLock()).toBe(false);
+  });
+
+  it('propagates the waitLock timeout and registers nothing when contended', () => {
+    const { GasLock } = loadGasLock({ contended: ['script'] });
+    const handle = GasLock.getLock('script');
+
+    expect(() => handle?.waitLock(100)).toThrow(LOCK_TIMEOUT_MESSAGE);
+    expect(GasLock.isHeld('script')).toBe(false);
+    expect(handle?.hasLock()).toBe(false);
+  });
+
+  it('joins a withLock section without touching the service or its lock', () => {
+    const { GasLock, mocks } = loadGasLock();
+
+    GasLock.withLock('script', () => {
+      const outer = lockOf(mocks.LockService.getScriptLock, 0);
+      const handle = GasLock.getLock('script');
+      const own = lockOf(mocks.LockService.getScriptLock, 1);
+
+      expect(handle?.tryLock(100)).toBe(true);
+      expect(own.tryLock).not.toHaveBeenCalled();
+      expect(handle?.hasLock()).toBe(true);
+
+      handle?.releaseLock();
+
+      expect(own.releaseLock).not.toHaveBeenCalled();
+      expect(outer.releaseLock).not.toHaveBeenCalled();
+      expect(outer.hasLock()).toBe(true);
+      expect(GasLock.isHeld('script')).toBe(true);
+      expect(handle?.hasLock()).toBe(false);
+    });
+
+    const outer = lockOf(mocks.LockService.getScriptLock, 0);
+    expect(outer.releaseLock).toHaveBeenCalledOnce();
+    expect(GasLock.isHeld('script')).toBe(false);
+  });
+
+  it('lets a nested withLock reuse a scope owned through a handle', () => {
+    const { GasLock, mocks } = loadGasLock();
+    const handle = GasLock.getLock('script');
+    const lock = lockOf(mocks.LockService.getScriptLock);
+    handle?.tryLock(100);
+
+    const result = GasLock.withLock('script', () => 'inner');
+
+    expect(result).toBe('inner');
+    expect(mocks.LockService.getScriptLock).toHaveBeenCalledOnce();
+    expect(lock.waitLock).not.toHaveBeenCalled();
+    expect(lock.releaseLock).not.toHaveBeenCalled();
+    expect(handle?.hasLock()).toBe(true);
+    expect(GasLock.isHeld('script')).toBe(true);
+
+    handle?.releaseLock();
+
+    expect(lock.releaseLock).toHaveBeenCalledOnce();
+    expect(GasLock.isHeld('script')).toBe(false);
+  });
+
+  it('reports a joined handle as holding only while the owner does', () => {
+    const { GasLock, mocks } = loadGasLock();
+    const owner = GasLock.getLock('script');
+    const joined = GasLock.getLock('script');
+    owner?.tryLock(100);
+
+    expect(joined?.tryLock(100)).toBe(true);
+    expect(joined?.hasLock()).toBe(true);
+
+    owner?.releaseLock();
+
+    expect(joined?.hasLock()).toBe(false);
+
+    // The owner is gone, so re-acquiring goes to the service again.
+    const joinedLock = lockOf(mocks.LockService.getScriptLock, 1);
+    expect(joined?.tryLock(100)).toBe(true);
+    expect(joinedLock.tryLock).toHaveBeenCalledOnce();
+    expect(GasLock.isHeld('script')).toBe(true);
+
+    joined?.releaseLock();
+
+    expect(joinedLock.releaseLock).toHaveBeenCalledOnce();
+    expect(GasLock.isHeld('script')).toBe(false);
+  });
+
+  it('makes releasing a joined handle a no-op for the owner', () => {
+    const { GasLock, mocks } = loadGasLock();
+    const first = GasLock.getLock('script');
+    const second = GasLock.getLock('script');
+    const firstLock = lockOf(mocks.LockService.getScriptLock, 0);
+    const secondLock = lockOf(mocks.LockService.getScriptLock, 1);
+    first?.tryLock(100);
+    second?.tryLock(100);
+
+    second?.releaseLock();
+
+    expect(secondLock.releaseLock).not.toHaveBeenCalled();
+    expect(firstLock.releaseLock).not.toHaveBeenCalled();
+    expect(GasLock.isHeld('script')).toBe(true);
+    expect(first?.hasLock()).toBe(true);
+
+    first?.releaseLock();
+
+    expect(firstLock.releaseLock).toHaveBeenCalledOnce();
+    expect(GasLock.isHeld('script')).toBe(false);
+  });
+
+  it('does not call the service again when an owning handle re-acquires', () => {
+    const { GasLock, mocks } = loadGasLock();
+    const handle = GasLock.getLock('script');
+    const lock = lockOf(mocks.LockService.getScriptLock);
+
+    handle?.tryLock(100);
+    expect(handle?.tryLock(100)).toBe(true);
+    handle?.waitLock(100);
+
+    expect(lock.tryLock).toHaveBeenCalledOnce();
+    expect(lock.waitLock).not.toHaveBeenCalled();
   });
 
   it('returns null when LockService provides no document lock', () => {

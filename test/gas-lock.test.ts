@@ -9,6 +9,17 @@ function lockOf(factory: Mock<() => MockLock | null>): MockLock {
   return lock;
 }
 
+const PROTOTYPE_KEYS = [
+  'toString',
+  'constructor',
+  'hasOwnProperty',
+  '__proto__',
+];
+
+/** Exact message for a rejected scope. */
+const unknownScopeMessage = (scope: string): string =>
+  `[GasLock] Unknown lock scope "${scope}". Expected one of: script, document, user.`;
+
 describe('GasLock.withLock', () => {
   it('acquires with waitLock and a 30000ms default timeout', () => {
     const { GasLock, mocks } = loadGasLock();
@@ -104,14 +115,40 @@ describe('GasLock.withLock', () => {
     );
   });
 
+  it.each(PROTOTYPE_KEYS)(
+    'throws for the inherited object key "%s"',
+    (scope) => {
+      const { GasLock } = loadGasLock();
+
+      expect(() => GasLock.withLock(scope, () => 1)).toThrow(
+        unknownScopeMessage(scope),
+      );
+    },
+  );
+
   it('throws when LockService returns no document lock', () => {
     const { GasLock } = loadGasLock({ unavailable: ['document'] });
 
     expect(() => GasLock.withLock('document', () => 1)).toThrow(
       /LockService returned no lock for scope "document"/,
     );
+    expect(() => GasLock.withLock('document', () => 1)).toThrow(
+      /"document" locks are unavailable outside the context of a containing document/,
+    );
     expect(GasLock.isHeld('document')).toBe(false);
   });
+
+  it.each(['script', 'user'] as const)(
+    'names the "%s" scope without the document hint when no lock is returned',
+    (scope) => {
+      const { GasLock } = loadGasLock({ unavailable: [scope] });
+
+      expect(() => GasLock.withLock(scope, () => 1)).toThrow(
+        `[GasLock] LockService returned no lock for scope "${scope}".`,
+      );
+      expect(GasLock.isHeld(scope)).toBe(false);
+    },
+  );
 
   it('propagates a waitLock timeout and leaves the scope unheld', () => {
     const { GasLock } = loadGasLock({ contended: ['script'] });
@@ -177,4 +214,13 @@ describe('GasLock.getLock', () => {
       '[GasLock] Unknown lock scope "bogus".',
     );
   });
+
+  it.each(PROTOTYPE_KEYS)(
+    'throws for the inherited object key "%s"',
+    (scope) => {
+      const { GasLock } = loadGasLock();
+
+      expect(() => GasLock.getLock(scope)).toThrow(unknownScopeMessage(scope));
+    },
+  );
 });

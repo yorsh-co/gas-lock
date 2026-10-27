@@ -2,12 +2,13 @@
 /**
  * Reentrancy-safe wrapper around Apps Script's LockService.
  *
- * GAS's document/script/user locks aren't reentrant: a second `waitLock()`
- * call for a scope the SAME execution already holds just blocks until its
- * own timeout, since nothing else in a single-threaded execution can ever
- * release it. GasLock tracks which scopes are currently held by the
- * current execution's call stack, so a nested `withLock()` call for a
- * scope already held higher up reuses it instead of trying to re-acquire.
+ * GAS's document/script/user locks are owned per execution, not per handle:
+ * acquiring a scope the SAME execution already holds succeeds immediately,
+ * and `releaseLock()` on any handle then releases the execution's lock —
+ * silently ending the outer critical section early. GasLock tracks which
+ * scopes the current execution holds, so a nested `withLock()` or
+ * `getLock()` handle for a held scope joins it instead of re-acquiring and
+ * later releasing it.
  *
  * Singleton namespace, not a class — the entire point is ONE shared,
  * execution-wide registry. Every consumer (gas-sheetdb, other gas-*
@@ -83,33 +84,82 @@ const GasLock: GasLockNamespace = (() => {
   };
 
   /**
-   * Resolve the raw `Lock` for a scope without acquiring it.
+   * Wrap `lock` in a handle that shares the `held` registry. A handle is
+   * `idle`, the `owner` of the scope (it really acquired the lock) or has
+   * `joined` a scope another holder already owns. Only an owner touches the
+   * real lock on release, so a nested holder can't end the outer section.
+   */
+  const trackedLock = (
+    scope: GasLockScope,
+    lock: GoogleAppsScript.Lock.Lock,
+  ): GoogleAppsScript.Lock.Lock => {
+    let state: 'idle' | 'owner' | 'joined' = 'idle';
+
+    /** Acquire through `acquireLock` unless the scope is already held. */
+    const acquire = (acquireLock: () => boolean): boolean => {
+      if (state === 'owner') return true;
+      // Re-checked on every call: the holder a joined handle relied on may
+      // have released since.
+      if (held.has(scope)) {
+        state = 'joined';
+        return true;
+      }
+      if (!acquireLock()) return false;
+      held.set(scope, lock);
+      state = 'owner';
+      return true;
+    };
+
+    return Object.freeze({
+      hasLock: (): boolean => {
+        if (state === 'owner') return lock.hasLock();
+        return state === 'joined' && held.has(scope);
+      },
+      releaseLock: (): void => {
+        const wasOwner = state === 'owner';
+        state = 'idle';
+        if (wasOwner) {
+          held.delete(scope);
+          lock.releaseLock();
+        }
+      },
+      tryLock: (timeoutMs: number): boolean =>
+        acquire(() => lock.tryLock(timeoutMs)),
+      waitLock: (timeoutMs: number): void => {
+        acquire(() => {
+          lock.waitLock(timeoutMs);
+          return true;
+        });
+      },
+    });
+  };
+
+  /**
+   * Resolve a tracked `Lock` handle for a scope without acquiring it.
    *
    * `withLock` covers the common case — hold a lock for the duration of a
    * callback, blocking on `waitLock` until it's available. Some callers
    * can't use that shape: a rate limiter guarding a `CacheService` counter
    * needs `tryLock`'s fail-fast semantics, because a busy limiter should
    * reject the request outright rather than queue behind it. `getLock`
-   * hands back the lock so those callers can drive
-   * `tryLock`/`releaseLock` themselves.
+   * hands back a handle so those callers can drive
+   * `tryLock`/`waitLock`/`releaseLock` themselves.
    *
-   * Two consequences of returning a bare lock:
+   * The handle shares the held-scope registry with `withLock`: acquiring a
+   * scope already held (by `withLock` or another handle) joins it without
+   * calling LockService, and releasing a joined handle never releases the
+   * real lock. A handle that really acquired the scope is visible to
+   * `isHeld` and to nested `withLock` calls.
    *
-   * - **The caller owns the lifecycle.** Nothing here acquires or releases
-   *   it; forgetting to `releaseLock()` holds it for the rest of the
-   *   execution.
-   * - **Not reentrancy-tracked.** The held-scope registry only covers
-   *   `withLock`'s callback-scoped critical sections, where GasLock knows
-   *   exactly when the scope is entered and left. It can't know that for a
-   *   lock it handed away, so a lock taken via `getLock` is invisible to
-   *   `isHeld` and to any nested `withLock` for the same scope — which
-   *   will then block against it as it would against raw `LockService`.
+   * The caller owns the lifecycle: forgetting to `releaseLock()` an owning
+   * handle holds the scope for the rest of the execution.
    *
    * Returns `null` when LockService itself declines to provide a lock —
    * notably `document` scope outside the context of a containing document.
    */
   const getLock = (scope: GasLockScope): GoogleAppsScript.Lock.Lock | null => {
-    return factoryFor(scope)();
+    const lock = factoryFor(scope)();
+    return lock ? trackedLock(scope, lock) : null;
   };
 
   return { withLock, isHeld, getLock };

@@ -1,11 +1,14 @@
 import { fileURLToPath } from 'node:url';
 import { createGasLoader } from 'gas-dev-config/test';
-import {
-  createMocks,
-  type MockLock,
-  type MockOptions,
-  type Mocks,
-} from './mocks';
+import { createMocks, type MockOptions, type Mocks } from './mocks';
+
+/** Lock-like handle returned by `GasLock.getLock`. */
+export interface LockHandle {
+  hasLock(): boolean;
+  releaseLock(): void;
+  tryLock(timeoutMs: number): boolean;
+  waitLock(timeoutMs: number): void;
+}
 
 /** Loose, test-side view of the `GasLock` namespace. */
 export interface GasLockNamespace {
@@ -15,7 +18,7 @@ export interface GasLockNamespace {
     options?: { timeoutMs?: number },
   ): T;
   isHeld(scope: string): boolean;
-  getLock(scope: string): MockLock | null;
+  getLock(scope: string): LockHandle | null;
 }
 
 /** Source files in load order; later files depend on earlier ones. */

@@ -29,6 +29,22 @@ const GasLock: GasLockNamespace = (() => {
   };
 
   /**
+   * Look up the `LockService` factory for `scope`, throwing for anything that
+   * isn't an own key of the registry (inherited members such as `toString`
+   * included).
+   */
+  const factoryFor = (
+    scope: GasLockScope,
+  ): (() => GoogleAppsScript.Lock.Lock) => {
+    if (!Object.prototype.hasOwnProperty.call(_GAS_LOCK_FACTORIES, scope)) {
+      throw new Error(
+        `[GasLock] Unknown lock scope "${scope}". Expected one of: ${Object.keys(_GAS_LOCK_FACTORIES).join(', ')}.`,
+      );
+    }
+    return _GAS_LOCK_FACTORIES[scope];
+  };
+
+  /**
    * Run `callback` holding `scope`. Reuses an already-held lock of the same
    * scope from higher up this execution's call stack instead of
    * re-acquiring it.
@@ -44,17 +60,14 @@ const GasLock: GasLockNamespace = (() => {
       return callback();
     }
 
-    const factory = _GAS_LOCK_FACTORIES[scope];
-    if (!factory) {
-      throw new Error(
-        `[GasLock] Unknown lock scope "${scope}". Expected one of: ${Object.keys(_GAS_LOCK_FACTORIES).join(', ')}.`,
-      );
-    }
-
-    const lock = factory();
+    const lock = factoryFor(scope)();
     if (!lock) {
+      const hint =
+        scope === 'document'
+          ? ' — "document" locks are unavailable outside the context of a containing document (e.g. a web app execution). Use "script" or "user" instead.'
+          : '.';
       throw new Error(
-        `[GasLock] LockService returned no lock for scope "${scope}" — "document" locks are unavailable outside the context of a containing document (e.g. a web app execution). Use "script" or "user" instead.`,
+        `[GasLock] LockService returned no lock for scope "${scope}"${hint}`,
       );
     }
 
@@ -96,13 +109,7 @@ const GasLock: GasLockNamespace = (() => {
    * notably `document` scope outside the context of a containing document.
    */
   const getLock = (scope: GasLockScope): GoogleAppsScript.Lock.Lock | null => {
-    const factory = _GAS_LOCK_FACTORIES[scope];
-    if (!factory) {
-      throw new Error(
-        `[GasLock] Unknown lock scope "${scope}". Expected one of: ${Object.keys(_GAS_LOCK_FACTORIES).join(', ')}.`,
-      );
-    }
-    return factory();
+    return factoryFor(scope)();
   };
 
   return { withLock, isHeld, getLock };

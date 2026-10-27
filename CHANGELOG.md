@@ -20,3 +20,8 @@
 - Lint, TypeScript and Prettier configuration and the test loader come from `gas-dev-config`
 - Dependabot groups development dependencies into one weekly pull request
 - `npm run typecheck` and ESLint also cover `test/` through `tsconfig.test.json`; `npm run check` runs the test suite
+
+### Fixed
+
+- Inherited `Object.prototype` keys (`toString`, `constructor`, `hasOwnProperty`, `__proto__`) are rejected as unknown scopes by `withLock` and `getLock`, instead of failing with a `waitLock is not a function` error or returning a non-lock value
+- The error for a missing lock names the requested scope, and shows the `document` context hint only for `document` scope

@@ -12,6 +12,10 @@ interface GasLockNamespace {
    * the current execution's call stack, reuses it instead of re-acquiring —
    * GAS's locks are owned per execution, so a naive nested acquire succeeds
    * and its release would end the outer critical section early.
+   *
+   * Throws if the owning call finds its lock already released when the
+   * callback returns (code outside GasLock called `releaseLock()`); a
+   * callback error takes precedence.
    */
   withLock<T>(
     scope: GasLockScope,

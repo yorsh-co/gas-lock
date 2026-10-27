@@ -163,6 +163,60 @@ describe('GasLock.withLock', () => {
     expect(ran).toBe(false);
     expect(GasLock.isHeld('script')).toBe(false);
   });
+
+  describe('when the lock is released outside GasLock', () => {
+    it('throws a lost-lock error naming the scope and skips releaseLock', () => {
+      const { GasLock, mocks } = loadGasLock();
+      const untracked = mocks.LockService.getScriptLock();
+
+      expect(() =>
+        GasLock.withLock('script', () => {
+          untracked?.releaseLock();
+          return 'done';
+        }),
+      ).toThrow(
+        /^\[GasLock\] The "script" lock was released before withLock's callback finished/,
+      );
+
+      const lock = lockOf(mocks.LockService.getScriptLock, 1);
+      expect(lock.releaseLock).not.toHaveBeenCalled();
+      expect(untracked?.releaseLock).toHaveBeenCalledOnce();
+      expect(GasLock.isHeld('script')).toBe(false);
+    });
+
+    it("propagates the callback's error instead of the lost-lock error", () => {
+      const { GasLock, mocks } = loadGasLock();
+
+      expect(() =>
+        GasLock.withLock('script', () => {
+          mocks.LockService.getScriptLock()?.releaseLock();
+          throw new Error('boom');
+        }),
+      ).toThrow('boom');
+
+      expect(
+        lockOf(mocks.LockService.getScriptLock).releaseLock,
+      ).not.toHaveBeenCalled();
+      expect(GasLock.isHeld('script')).toBe(false);
+    });
+
+    it('is detected only by the owning call, not a nested reentrant one', () => {
+      const { GasLock, mocks } = loadGasLock();
+      let inner: string | undefined;
+
+      expect(() =>
+        GasLock.withLock('script', () => {
+          inner = GasLock.withLock('script', () => {
+            mocks.LockService.getScriptLock()?.releaseLock();
+            return 'inner';
+          });
+        }),
+      ).toThrow(/^\[GasLock\] The "script" lock was released/);
+
+      expect(inner).toBe('inner');
+      expect(GasLock.isHeld('script')).toBe(false);
+    });
+  });
 });
 
 describe('GasLock.isHeld', () => {

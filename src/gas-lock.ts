@@ -49,6 +49,10 @@ const GasLock: GasLockNamespace = (() => {
    * Run `callback` holding `scope`. Reuses an already-held lock of the same
    * scope from higher up this execution's call stack instead of
    * re-acquiring it.
+   *
+   * Throws if the owning call finds its lock already released when the
+   * callback returns (code outside GasLock called `releaseLock()`); a
+   * callback error takes precedence.
    */
   const withLock = <T>(
     scope: GasLockScope,
@@ -75,12 +79,25 @@ const GasLock: GasLockNamespace = (() => {
     const timeoutMs = options.timeoutMs ?? _GAS_LOCK_DEFAULT_TIMEOUT_MS;
     lock.waitLock(timeoutMs);
     held.set(scope, lock);
+    let result: T;
+    let lost: boolean;
     try {
-      return callback();
+      result = callback();
     } finally {
       held.delete(scope);
-      lock.releaseLock();
+      // Someone outside GasLock already released this execution's lock, and
+      // releasing again could end a lock acquired since, so skip it.
+      lost = !lock.hasLock();
+      if (!lost) lock.releaseLock();
     }
+    // Reached only when the callback returned: a callback error propagates
+    // from the `finally` above and wins over this less useful failure.
+    if (lost) {
+      throw new Error(
+        `[GasLock] The "${scope}" lock was released before withLock's callback finished — code outside GasLock called releaseLock() for this scope, so part of the critical section ran without the lock.`,
+      );
+    }
+    return result;
   };
 
   /**

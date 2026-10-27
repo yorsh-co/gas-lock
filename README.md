@@ -6,21 +6,22 @@
 
 > The goal of this project is to make nested locking in Apps Script projects safe by default, without callers having to track for themselves whether a lock is already held somewhere higher up the call stack.
 
-Apps Script's `LockService` locks (`script`, `document`, `user`) aren't reentrant. If code that already holds a lock calls into other code that tries to acquire that same lock again — directly, or several layers down through another library — the second `waitLock()` call just blocks until it times out. Nothing else in a single-threaded execution can ever release the first lock while it's stuck waiting on the second, so the call silently hangs until the timeout throws.
+Apps Script's `LockService` locks (`script`, `document`, `user`) are owned per execution, not per handle. If code that already holds a lock calls into other code that acquires that same lock again — directly, or several layers down through another library — the nested acquire succeeds immediately, without blocking. The hazard comes afterwards: `releaseLock()` on _any_ handle releases the execution's lock, so the nested code's release silently ends the outer critical section early. The rest of the outer section runs without the lock, and nothing throws.
 
-`gas-lock` fixes this by tracking which scopes are currently held by the current execution's call stack. A nested `withLock()` call for a scope already held higher up reuses it instead of trying to acquire it again.
+`gas-lock` fixes this by tracking which scopes are currently held by the current execution. A nested `withLock()` call, or a `getLock()` handle, for a scope already held joins it instead of acquiring it again, and never releases it — only the code that really acquired the lock does.
 
 > **Disclaimer:**
 > This project and [Yorsh](https://github.com/yorsh-co) are independent and are not affiliated with, endorsed by, or associated with Google LLC.
 
 ### Features
 
-- Reentrancy-safe `withLock()` — nested calls for an already-held scope reuse it instead of deadlocking
+- Reentrancy-safe `withLock()` — nested calls for an already-held scope reuse it instead of releasing the outer lock early
 - Supports all three `LockService` scopes: `script`, `document`, `user`
 - `isHeld()` to check whether a scope is already held in the current execution
-- `getLock()` for callers needing raw, non-blocking `tryLock()`/`releaseLock()` control instead of `withLock`'s blocking `waitLock`
+- `getLock()` for callers needing non-blocking `tryLock()`/`releaseLock()` control instead of `withLock`'s blocking `waitLock` — returns a tracked handle that shares `withLock`'s registry
+- Detects a lock released outside `GasLock` and throws instead of silently finishing an unprotected critical section
 - Clear, actionable errors instead of raw null-reference failures — e.g. when `document` scope is requested outside the context of a containing document
-- Designed to be optionally injectable into other libraries (e.g. `gas-sheetdb`, `gas-webapp`) as their lock service, the same way a logger is injected — each falls back to calling `LockService` directly if `gas-lock` isn't provided
+- Designed to be optionally injectable into other libraries (e.g. `gas-sheetdb`, `gas-webapp`) as their lock service, the same way a logger is injected (`gas-sheetdb` uses `withLock`, `gas-webapp`'s limiters use `getLock`) — each falls back to calling `LockService` directly if `gas-lock` isn't provided
 - Singleton namespace, not a class — one shared, execution-wide registry
 - Written in TypeScript with generated JavaScript distribution
 - No external dependencies beyond built-in Apps Script services
@@ -28,13 +29,13 @@ Apps Script's `LockService` locks (`script`, `document`, `user`) aren't reentran
 ### Example Usage
 
 ```js
-// A naive nested lock would deadlock here — the inner call blocks until
-// timeout, waiting on a lock the outer call already holds and can't
-// release until the inner call returns.
+// With raw LockService, the nested acquire succeeds and its releaseLock()
+// would release the lock the outer call holds, so everything after
+// saveConfig() would run unprotected.
 GasLock.withLock('script', () => {
   // holds 'script'
   saveConfig(); // internally also calls GasLock.withLock('script', ...)
-  // reused, not re-acquired — no deadlock
+  // joined, not re-acquired or released — the lock is still held here
 });
 
 function saveConfig() {
@@ -132,11 +133,12 @@ To avoid this, add a [`filePushOrder`](https://github.com/google/clasp#filepusho
 {
   "filePushOrder": [
     "dist/lib/gas-lock/gas-lock.constants.js",
-    "dist/lib/gas-lock/gas-lock.js",
-    "dist/lib/gas-lock/gas-lock.types.js"
+    "dist/lib/gas-lock/gas-lock.js"
   ]
 }
 ```
+
+Use the path where the files land in your pushed project, e.g. `src/lib/gas-lock/...` when pushing the subtree as-is.
 
 Alternatively, you can manually move these files to the top of the file list in the Apps Script editor.
 
@@ -189,12 +191,13 @@ GasLock.withLock('script', () => {
 GasLock.withLock('script', () => {
   // holds 'script'
   GasLock.withLock('script', () => {
-    // reused, not re-acquired — no deadlock
+    // runs directly — no acquire and, crucially, no release
   });
+  // still holds 'script' here
 });
 ```
 
-Nesting _different_ scopes is unaffected — each is tracked and acquired/released independently.
+Nesting _different_ scopes is unaffected — each is tracked and acquired/released independently. See [Lock ordering](#limitations) for the one caveat.
 
 ### Check whether a scope is already held
 
@@ -204,7 +207,7 @@ if (GasLock.isHeld('script')) {
 }
 ```
 
-### Get the raw lock for non-blocking use
+### Get a tracked lock handle for non-blocking use
 
 ```js
 const lock = GasLock.getLock('script');
@@ -218,10 +221,14 @@ if (lock && lock.tryLock(3000)) {
 }
 ```
 
+The handle has the same `hasLock`/`releaseLock`/`tryLock`/`waitLock` interface as a `LockService` lock and shares `withLock`'s registry:
+
+- Acquiring a scope that is already held joins it without calling `LockService`, and releasing a joined handle is a no-op.
+- Only the handle that really acquired the lock releases it.
+- An owned scope is visible to `isHeld()` and to nested `withLock()` calls.
+
 > **Note:**
-> `getLock()` hands back the lock and steps out of the way — the caller owns `tryLock`/`releaseLock`, and forgetting to release holds it for the rest of the execution.
->
-> It is also **not reentrancy-tracked**, and the consequence is worth being explicit about: a lock taken via `getLock()` is invisible to the registry, so `isHeld()` won't report it and a nested `withLock()` for the same scope will block against it exactly as it would against raw `LockService`. Reentrancy tracking only works for `withLock`'s callback-scoped critical sections, where `gas-lock` knows precisely when the scope is entered and left.
+> `getLock()` hands back the handle and steps out of the way — the caller still drives `tryLock`/`waitLock`/`releaseLock`, and must release an owning handle (use `try`/`finally`). Forgetting to release holds the scope for the rest of the execution.
 >
 > Reach for `getLock()` only when you need `tryLock`'s non-blocking, fail-fast behavior — not as a general alternative to `withLock`.
 
@@ -241,9 +248,9 @@ GasLock.withLock(
 
 ### Reentrancy
 
-`LockService`'s `script`, `document`, and `user` locks are plain mutual-exclusion primitives — they have no concept of "the same execution already holds this." A second `waitLock()` call for a scope your own execution already holds just queues behind a lock that will never be released, since the only code that could release it is itself blocked waiting on the nested call to return.
+`LockService`'s `script`, `document`, and `user` locks are owned per execution, not per handle. A nested acquire of a scope your own execution already holds succeeds immediately, so nothing blocks or deadlocks. But `releaseLock()` on any handle releases the execution's lock, so the nested code's release silently ends the outer critical section early — the remainder runs without the lock, with no error.
 
-`GasLock` tracks currently-held scopes in an execution-scoped registry. When `withLock()` is called for a scope already in that registry, it runs the callback directly instead of calling `LockService` again. State lives only as long as one execution — Apps Script gives every `doGet`/`doPost`/trigger invocation a fresh global scope, so this never leaks between requests or users.
+`GasLock` tracks currently-held scopes in an execution-scoped registry. When `withLock()` is called for a scope already in that registry, it runs the callback directly, without acquiring and, crucially, without releasing, so the outer section keeps its lock. `getLock()` handles follow the same rules. State lives only as long as one execution — Apps Script gives every `doGet`/`doPost`/trigger invocation a fresh global scope, so this never leaks between requests or users.
 
 ### Lock Scopes
 
@@ -257,11 +264,16 @@ GasLock.withLock(
 
 ### Errors
 
-`withLock()` throws a descriptive error rather than a raw null-reference failure when `LockService` can't provide the requested lock — most commonly when `document` scope is requested outside the context of a containing document, e.g. a web app execution.
+- An unrecognized `scope` (including inherited keys such as `toString`) throws from both `withLock()` and `getLock()`.
+- When `LockService` can't provide the requested lock — most commonly `document` scope outside the context of a containing document, e.g. a web app execution — `withLock()` throws a descriptive error naming the scope (the `document` hint is shown only for that scope). `getLock()` returns `null` instead, leaving the decision to the caller: a non-blocking caller may reasonably want to proceed unguarded, or fail its own way.
+- If the owning `withLock()` call finds its lock no longer held when the callback returns, because code outside `GasLock` called `releaseLock()`, it skips the release and throws `[GasLock] The "<scope>" lock was released before withLock's callback finished — ...`. An error thrown by the callback takes precedence.
+- `waitLock` timeouts propagate from `LockService` unchanged.
 
-`getLock()` returns `null` in that same situation rather than throwing, leaving the decision to the caller: a non-blocking caller may reasonably want to proceed unguarded, or fail its own way, rather than have an exception raised on its behalf.
+### Limitations
 
-Both throw on an unrecognized `scope` value.
+- **Only cooperating callers are protected.** Code that calls `LockService` directly for the same scope can still release the execution's lock. `withLock()` detects this after the fact (it throws) but can't prevent it, so route all locking through `GasLock`, or inject it into [`gas-sheetdb`](https://github.com/yorsh-co/gas-sheetdb) and [`gas-webapp`](https://github.com/yorsh-co/gas-webapp).
+- **Synchronous callbacks only.** If the callback returns a `Promise`, the lock is released before it settles.
+- **Lock ordering across executions.** Nesting different scopes in opposite orders in different code paths (e.g. `script` → `user` in one, `user` → `script` in another) can make two concurrent executions wait on each other until a timeout. Keep a consistent order.
 
 ### Entry Point
 
@@ -274,7 +286,7 @@ Main entry point for the library. Singleton namespace, not a class — there is 
 ```js
 GasLock.withLock(scope, callback, options); // options is optional; { timeoutMs } defaults to 30000
 GasLock.isHeld(scope);
-GasLock.getLock(scope); // → Lock | null
+GasLock.getLock(scope); // → tracked Lock handle | null
 ```
 
 ### Example Workflow
@@ -287,8 +299,8 @@ function saveReportsFolderId(folderId) {
     if (appConfig.get('reportsFolderId')) return;
 
     appConfig.set('reportsFolderId', folderId); // internally also calls
-    // GasLock.withLock('script', ...) via gas-sheetdb — reused, not
-    // re-acquired, so this doesn't deadlock.
+    // GasLock.withLock('script', ...) via gas-sheetdb — joined, not
+    // re-acquired or released, so the lock is held until this callback ends.
   });
 }
 ```

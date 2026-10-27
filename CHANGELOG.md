@@ -26,3 +26,10 @@
 
 - Inherited `Object.prototype` keys (`toString`, `constructor`, `hasOwnProperty`, `__proto__`) are rejected as unknown scopes by `withLock` and `getLock`, instead of failing with a `waitLock is not a function` error or returning a non-lock value
 - The error for a missing lock names the requested scope, and shows the `document` context hint only for `document` scope
+
+### Docs
+
+- README describes the real `LockService` hazard — a nested release ends the outer critical section early — instead of a deadlock
+- README documents the tracked `getLock` handle and the lost-lock error
+- New Limitations section: cooperating callers only, synchronous callbacks only and lock ordering across executions
+- `filePushOrder` example no longer lists `gas-lock.types.js` and notes the pushed-project path

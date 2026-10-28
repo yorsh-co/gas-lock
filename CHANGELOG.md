@@ -2,6 +2,14 @@
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- Canonical peer type declarations in `peer/gas-lock.peer.types.d.ts`, for consuming gas-\* libraries to copy into `src/internal/` and type-check `GasLock` standalone without vendoring the source
+
+---
+
 ## [1.0.0] - 2026-10-27
 
 ### Added

@@ -311,6 +311,13 @@ The source code is written in TypeScript.
 
 Release builds are compiled to JavaScript before publishing so the distributed library remains compatible with Google Apps Script.
 
+### Apps Script tests
+
+The Vitest suite runs against an in-memory `LockService`. `gas-test/gas-lock.ts` checks the platform behaviour that mock assumes (per-execution lock ownership, `document` scope availability) in a real Apps Script execution. They are built and run with [gas-dev-config](https://github.com/yorsh-co/gas-dev-config#apps-script-tests)'s `gas-test`; see its README for the one-off setup.
+
+- `npm run test:gas:build` writes a single script; paste it into the Apps Script editor and run `runGasTests`.
+- `npm run test:gas` pushes it to a dedicated test project with clasp and prints the results. It needs `clasp login` and `GAS_TEST_SCRIPT_ID`; the project's contents are replaced.
+
 ## Planned features
 
 - Optional configurable default timeout per scope, rather than one global default

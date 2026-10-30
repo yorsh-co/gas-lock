@@ -171,6 +171,7 @@ describe('GasLock.withLock', () => {
 
       expect(() =>
         GasLock.withLock('script', () => {
+          untracked?.tryLock(0);
           untracked?.releaseLock();
           return 'done';
         }),
@@ -189,7 +190,9 @@ describe('GasLock.withLock', () => {
 
       expect(() =>
         GasLock.withLock('script', () => {
-          mocks.LockService.getScriptLock()?.releaseLock();
+          const untracked = mocks.LockService.getScriptLock();
+          untracked?.tryLock(0);
+          untracked?.releaseLock();
           throw new Error('boom');
         }),
       ).toThrow('boom');
@@ -207,13 +210,30 @@ describe('GasLock.withLock', () => {
       expect(() =>
         GasLock.withLock('script', () => {
           inner = GasLock.withLock('script', () => {
-            mocks.LockService.getScriptLock()?.releaseLock();
+            const untracked = mocks.LockService.getScriptLock();
+            untracked?.tryLock(0);
+            untracked?.releaseLock();
             return 'inner';
           });
         }),
       ).toThrow(/^\[GasLock\] The "script" lock was released/);
 
       expect(inner).toBe('inner');
+      expect(GasLock.isHeld('script')).toBe(false);
+    });
+
+    it('ignores a bare releaseLock on a handle that never acquired', () => {
+      const { GasLock, mocks } = loadGasLock();
+
+      const result = GasLock.withLock('script', () => {
+        mocks.LockService.getScriptLock()?.releaseLock();
+        return 'done';
+      });
+
+      expect(result).toBe('done');
+      expect(
+        lockOf(mocks.LockService.getScriptLock).releaseLock,
+      ).toHaveBeenCalledOnce();
       expect(GasLock.isHeld('script')).toBe(false);
     });
   });

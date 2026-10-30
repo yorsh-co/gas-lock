@@ -25,8 +25,12 @@ export interface MockOptions {
 /**
  * Fresh `LockService` fake modelling Apps Script's ownership rules: locks are
  * owned per execution and per scope, so every handle for a scope shares one
- * "held" flag. Acquiring a scope this execution already holds succeeds at once,
- * and `releaseLock` on any handle clears the flag.
+ * "held" flag.
+ * - Acquiring a scope this execution already holds succeeds at once.
+ * - `hasLock` reports the execution's ownership of the scope on any handle,
+ *   including one that never acquired.
+ * - `releaseLock` releases the scope only on a handle that has acquired
+ *   (including a nested acquire); on any other handle it is a no-op.
  */
 export function createMocks(options: MockOptions = {}) {
   const unavailable = new Set(options.unavailable);
@@ -50,9 +54,11 @@ export function createMocks(options: MockOptions = {}) {
       }),
       tryLock: vi.fn(() => acquire()),
       releaseLock: vi.fn(() => {
+        if (!acquired) return;
+        acquired = false;
         heldScopes.delete(scope);
       }),
-      hasLock: vi.fn(() => acquired && heldScopes.has(scope)),
+      hasLock: vi.fn(() => heldScopes.has(scope)),
     };
   };
 

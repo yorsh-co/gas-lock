@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { createGasLoader } from 'gas-dev-config/test';
+import { createGasLoader, loadOrderFiles } from 'gas-dev-config/test';
 import { createMocks, type MockOptions, type Mocks } from './mocks';
 
 /** Lock-like handle returned by `GasLock.getLock`. */
@@ -21,17 +21,12 @@ export interface GasLockNamespace {
   getLock(scope: string): LockHandle | null;
 }
 
-/** Source files in load order; later files depend on earlier ones. */
-const SOURCE_FILES = [
-  'gas-lock.types.ts',
-  'gas-lock.constants.ts',
-  'gas-lock.ts',
-];
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const load = createGasLoader<{ GasLock: GasLockNamespace }>({
-  files: SOURCE_FILES.map((file) => `src/${file}`),
+  files: loadOrderFiles(ROOT),
   exports: ['GasLock'],
-  root: fileURLToPath(new URL('..', import.meta.url)),
+  root: ROOT,
 });
 
 /**

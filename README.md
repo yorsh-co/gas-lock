@@ -53,7 +53,10 @@ function saveConfig() {
 
 ## Quick Start
 
-It is recommended to use `gas-lock` together with [Google's `clasp` CLI](https://github.com/google/clasp) for local Apps Script development and git-based workflows. See [Setup instructions with `clasp`](#setup-instructions-with-clasp) for more information.
+> [!TIP]
+> Use `gas-lock` together with [Google's `clasp` CLI](https://github.com/google/clasp) for local Apps Script development and git-based workflows. See [Setup instructions with `clasp`](#setup-instructions-with-clasp) for more information.
+
+<a id="add-the-library"></a>
 
 #### 1. Add the library to your Apps Script project
 
@@ -111,7 +114,7 @@ src/lib/gas-lock/
 
 This is required for calling `GasLock.withLock()` or `GasLock.getLock()` at runtime, as a global variable or inside an IIFE.
 
-See the [Configure the file push order](#5-configure-the-file-push-order) section for details.
+See the [Configure the file push order](#file-push-order) section for details.
 
 With gas-dev-bundle, the single entry is the bundle file, e.g. `src/lib/gas-libraries.js` (adjusted for `rootDir`).
 
@@ -155,6 +158,8 @@ or create a new project:
 clasp create --type standalone
 ```
 
+<a id="file-push-order"></a>
+
 #### 5. Configure the file push order
 
 Apps Script executes files by the order in the Apps Script editor, from top to bottom. By default, `clasp push` orders the files alphabetically, by file name. If `GasLock.withLock()` or `GasLock.getLock()` is called at runtime (as a global variable or in an IIFE) in a file ordered before `gas-lock`'s own files, `clasp push` will succeed but running the project will throw:
@@ -168,8 +173,8 @@ To avoid this, add a [`filePushOrder`](https://github.com/google/clasp#filepusho
 ```json
 {
   "filePushOrder": [
-    "dist/lib/gas-lock/gas-lock.constants.js",
-    "dist/lib/gas-lock/gas-lock.js"
+    "src/lib/gas-lock/gas-lock.constants.js",
+    "src/lib/gas-lock/gas-lock.js"
   ]
 }
 ```
@@ -185,7 +190,7 @@ With gas-dev-bundle, the single entry is the bundle file, e.g. `src/lib/gas-libr
 
 #### 6. Import `gas-lock`
 
-To install several gas-\* libraries together, use the [gas-dev-bundle method](#1-add-the-library-to-your-apps-script-project) from the Quick Start; otherwise, add this library with git subtree:
+To install several gas-\* libraries together, use the [gas-dev-bundle method](#add-the-library) from the Quick Start; otherwise, add this library with git subtree:
 
 ```bash
 git subtree add \

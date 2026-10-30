@@ -2,6 +2,14 @@
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- README: the `filePushOrder` example uses the `src/lib/` subtree path its text describes, the Quick Start tip is a callout like the other gas-\* READMEs, and cross-references use anchors that survive renumbering the steps
+
+---
+
 ## [1.2.1] - 2026-10-30
 
 ### Changed

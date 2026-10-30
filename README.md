@@ -57,6 +57,40 @@ It is recommended to use `gas-lock` together with [Google's `clasp` CLI](https:/
 
 #### 1. Add the library to your Apps Script project
 
+##### Several gas-\* libraries: gas-dev-bundle
+
+[gas-dev-bundle](https://github.com/yorsh-co/gas-dev-bundle) resolves version ranges against the libraries' release tags and writes them into one script, in dependency order.
+
+```bash
+npm install -D github:yorsh-co/gas-dev-bundle#semver:^1.1.1
+```
+
+List the libraries in your `package.json`:
+
+```json
+{
+  "gasDevBundle": {
+    "outFile": "src/lib/gas-libraries.js",
+    "libraries": {
+      "gas-lock": "^1.2.0",
+      "gas-logger": "^1.3.0"
+    }
+  }
+}
+```
+
+```bash
+npx gas-dev-bundle
+```
+
+- Commit the generated file. Its header records each library's version and commit SHA.
+- Re-run the command after changing a range to upgrade.
+- Requires `gas-lock` >= 1.2.0, the first release that carries the load-order metadata.
+
+See the [gas-dev-bundle README](https://github.com/yorsh-co/gas-dev-bundle) for configuration details.
+
+##### This library only: git subtree
+
 This repository is intended to be added directly into Apps Script projects using git subtree.
 
 ```bash
@@ -78,6 +112,8 @@ src/lib/gas-lock/
 This is required for calling `GasLock.withLock()` or `GasLock.getLock()` at runtime, as a global variable or inside an IIFE.
 
 See the [Configure the file push order](#5-configure-the-file-push-order) section for details.
+
+With gas-dev-bundle, the single entry is the bundle file, e.g. `src/lib/gas-libraries.js` (adjusted for `rootDir`).
 
 #### 3. Call `GasLock` wherever a lock is needed
 
@@ -142,10 +178,14 @@ Use the path where the files land in your pushed project, e.g. `src/lib/gas-lock
 
 Alternatively, you can manually move these files to the top of the file list in the Apps Script editor.
 
+With gas-dev-bundle, the single entry is the bundle file, e.g. `src/lib/gas-libraries.js` (adjusted for `rootDir`).
+
 > **Note:**
 > Any file in your own project that calls `GasLock.withLock()` or `GasLock.getLock()` at the top level (e.g. outside a function) must be pushed _after_ the entries above. Calls made from inside functions or methods are unaffected, since those only run after every file has already loaded.
 
 #### 6. Import `gas-lock`
+
+To install several gas-\* libraries together, use the [gas-dev-bundle method](#1-add-the-library-to-your-apps-script-project) from the Quick Start; otherwise, add this library with git subtree:
 
 ```bash
 git subtree add \

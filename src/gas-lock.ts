@@ -4,11 +4,11 @@
  *
  * GAS's document/script/user locks are owned per execution, not per handle:
  * acquiring a scope the SAME execution already holds succeeds immediately,
- * and `releaseLock()` on any handle then releases the execution's lock —
- * silently ending the outer critical section early. GasLock tracks which
- * scopes the current execution holds, so a nested `withLock()` or
- * `getLock()` handle for a held scope joins it instead of re-acquiring and
- * later releasing it.
+ * and `releaseLock()` on any handle that has acquired it (a nested acquire
+ * counts) releases the execution's lock — silently ending the outer critical
+ * section early. GasLock tracks which scopes the current execution holds, so
+ * a nested `withLock()` or `getLock()` handle for a held scope joins it
+ * instead of re-acquiring and later releasing it.
  *
  * Singleton namespace, not a class — the entire point is ONE shared,
  * execution-wide registry. Every consumer (gas-sheetdb, other gas-*

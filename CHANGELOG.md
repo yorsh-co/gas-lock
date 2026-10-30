@@ -14,6 +14,11 @@
 - Load order is read from `gasDevConfig.loadOrder` instead of being duplicated in the test harness
 - Bumped gas-dev-config to ^1.4.0 and gas-dev-release to ^1.1.0
 
+### Fixed
+
+- The Vitest `LockService` mock now matches Apps Script: a bare `releaseLock()` is a no-op and `hasLock()` reports the execution's ownership; the lost-lock tests exercise a nested acquire-and-release
+- Docs state that only a handle that acquired the lock releases it, correcting the 1.0.0 wording
+
 ---
 
 ## [1.1.0] - 2026-10-28

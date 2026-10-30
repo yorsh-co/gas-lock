@@ -6,7 +6,7 @@
 
 > The goal of this project is to make nested locking in Apps Script projects safe by default, without callers having to track for themselves whether a lock is already held somewhere higher up the call stack.
 
-Apps Script's `LockService` locks (`script`, `document`, `user`) are owned per execution, not per handle. If code that already holds a lock calls into other code that acquires that same lock again — directly, or several layers down through another library — the nested acquire succeeds immediately, without blocking. The hazard comes afterwards: `releaseLock()` on _any_ handle releases the execution's lock, so the nested code's release silently ends the outer critical section early. The rest of the outer section runs without the lock, and nothing throws.
+Apps Script's `LockService` locks (`script`, `document`, `user`) are owned per execution, not per handle. If code that already holds a lock calls into other code that acquires that same lock again — directly, or several layers down through another library — the nested acquire succeeds immediately, without blocking. The hazard comes afterwards: `releaseLock()` on any handle that has acquired the lock — a nested acquire counts — releases the execution's lock, so the nested code's release silently ends the outer critical section early. The rest of the outer section runs without the lock, and nothing throws.
 
 `gas-lock` fixes this by tracking which scopes are currently held by the current execution. A nested `withLock()` call, or a `getLock()` handle, for a scope already held joins it instead of acquiring it again, and never releases it — only the code that really acquired the lock does.
 
@@ -248,7 +248,7 @@ GasLock.withLock(
 
 ### Reentrancy
 
-`LockService`'s `script`, `document`, and `user` locks are owned per execution, not per handle. A nested acquire of a scope your own execution already holds succeeds immediately, so nothing blocks or deadlocks. But `releaseLock()` on any handle releases the execution's lock, so the nested code's release silently ends the outer critical section early — the remainder runs without the lock, with no error.
+`LockService`'s `script`, `document`, and `user` locks are owned per execution, not per handle. A nested acquire of a scope your own execution already holds succeeds immediately, so nothing blocks or deadlocks. But `releaseLock()` on any handle that has acquired the lock (a nested acquire counts) releases the execution's lock, so the nested code's release silently ends the outer critical section early — the remainder runs without the lock, with no error.
 
 `GasLock` tracks currently-held scopes in an execution-scoped registry. When `withLock()` is called for a scope already in that registry, it runs the callback directly, without acquiring and, crucially, without releasing, so the outer section keeps its lock. `getLock()` handles follow the same rules. State lives only as long as one execution — Apps Script gives every `doGet`/`doPost`/trigger invocation a fresh global scope, so this never leaks between requests or users.
 

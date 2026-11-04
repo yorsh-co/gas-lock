@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Requires `gas-dev-release` `^1.3.0`, whose release preflight checks that the peer declarations' `@version` header matches `package.json`
+
 ### Fixed
 
 - The peer declarations' `@version` header now matches the package version (1.2.2)

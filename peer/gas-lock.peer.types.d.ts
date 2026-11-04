@@ -13,10 +13,11 @@
  * `include: ["src/**\/*.ts"]` but emits nothing, so no counterpart reaches
  * dist/ or the published package.
  *
- * Usage: copy into the consuming package as `src/internal/`.
+ * Usage: list `gas-lock` in `gasDevConfig.peers` and run
+ * `gas-dev-config peers sync`, which writes it to `src/internal/`.
  *
  * @see https://github.com/yorsh-co/gas-lock
- * @version 1.2.3
+ * @version 1.2.4
  */
 
 /** Which LockService lock a `withLock` call acquires. */

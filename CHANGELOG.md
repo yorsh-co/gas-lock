@@ -6,6 +6,7 @@
 
 ### Changed
 
+- Requires `gas-dev-config` `^2.0.0`
 - The peer declarations' usage header points consumers at `gas-dev-config peers sync` instead of a manual copy
 
 ### Fixed

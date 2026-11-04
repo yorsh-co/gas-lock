@@ -2,6 +2,14 @@
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- The peer declarations' `@version` header now matches the package version (1.2.2)
+
+---
+
 ## [1.2.2] - 2026-11-04
 
 ### Changed

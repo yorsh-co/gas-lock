@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+---
+
+## [1.2.4] - 2026-11-04
+
 ### Changed
 
 - Requires `gas-dev-config` `^2.0.0`

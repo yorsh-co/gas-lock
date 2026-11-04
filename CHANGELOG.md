@@ -7,6 +7,7 @@
 ### Changed
 
 - README: the `filePushOrder` example uses the `src/lib/` subtree path its text describes, the Quick Start tip is a callout like the other gas-\* READMEs, and cross-references use anchors that survive renumbering the steps
+- Releases also publish the GitHub Release for `vX.Y.Z` (`gasDevRelease.githubRelease`); `gas-dev-release` dev dependency bumped to `^1.2.1`
 
 ---
 

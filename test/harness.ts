@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { createGasLoader, loadOrderFiles } from 'gas-dev-config/test';
+import { createGasLoader, loadOrderFiles } from 'gasdev/test';
 import { createMocks, type MockOptions, type Mocks } from './mocks';
 
 /** Lock-like handle returned by `GasLock.getLock`. */

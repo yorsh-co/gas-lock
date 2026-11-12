@@ -17,7 +17,7 @@
  * `gasdev peers sync`, which writes it to `src/internal/`.
  *
  * @see https://github.com/yorsh-co/gas-lock
- * @version 1.2.4
+ * @version 1.2.5
  */
 
 /** Which LockService lock a `withLock` call acquires. */
